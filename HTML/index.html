@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Estación Meteorológica + IA</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    /* ── Historial modal/subventana ─────────────────────────── */
+    .hist-overlay {
+      display: none;
+      position: fixed; inset: 0; z-index: 100;
+      background: rgba(0,0,0,.65);
+      align-items: center; justify-content: center;
+    }
+    .hist-overlay.open { display: flex; }
+
+    .hist-window {
+      background: var(--surface);
+      border: 1px solid var(--border2);
+      border-radius: 16px;
+      width: min(820px, 96vw);
+      max-height: 82vh;
+      display: flex; flex-direction: column;
+      box-shadow: 0 24px 60px rgba(0,0,0,.6);
+      animation: slideUp .22s ease;
+    }
+    @keyframes slideUp {
+      from { transform: translateY(18px); opacity: 0; }
+      to   { transform: translateY(0);    opacity: 1; }
+    }
+
+    .hist-head {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .hist-head h3 { font-size: 14px; font-weight: 600; }
+    .hist-head span { font-size: 11px; color: var(--muted); margin-left: 10px; }
+    .hist-close {
+      background: none; border: none; color: var(--muted);
+      font-size: 20px; cursor: pointer; line-height: 1;
+      padding: 2px 6px; border-radius: 6px;
+      transition: color .15s;
+    }
+    .hist-close:hover { color: var(--text); }
+
+    .hist-body {
+      overflow-y: auto; flex: 1;
+      padding: 0;
+    }
+
+    .hist-table {
+      width: 100%; border-collapse: collapse;
+      font-size: 12.5px;
+    }
+    .hist-table thead th {
+      position: sticky; top: 0;
+      background: var(--surface2);
+      padding: 10px 16px; text-align: left;
+      font-size: 11px; color: var(--muted);
+      text-transform: uppercase; letter-spacing: .05em;
+      border-bottom: 1px solid var(--border);
+      font-weight: 500;
+    }
+    .hist-table tbody tr {
+      border-bottom: 1px solid var(--border);
+      transition: background .1s;
+    }
+    .hist-table tbody tr:hover { background: var(--surface2); }
+    .hist-table tbody td {
+      padding: 8px 16px; color: var(--text);
+    }
+    .hist-table tbody td.num {
+      font-family: 'Courier New', monospace;
+      font-size: 13px; font-weight: 600;
+    }
+    .hist-table tbody td.fecha { color: var(--muted); font-size: 11px; }
+    .hist-table tbody td.idx  { color: var(--muted); font-size: 11px; text-align: right; }
+
+    .hist-footer {
+      padding: 10px 20px;
+      border-top: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .hist-footer-info { font-size: 11px; color: var(--muted); }
+    .hist-export-btn {
+      font-size: 11px; padding: 5px 12px;
+      border-radius: 7px; border: 1px solid var(--border2);
+      background: none; color: var(--muted); cursor: pointer;
+      transition: all .15s;
+    }
+    .hist-export-btn:hover { border-color: var(--accent-ai); color: var(--accent-ai); }
+
+    /* Botón "Ver 300" en sparklines */
+    .spark-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    .spark-btn {
+      font-size: 10px; padding: 3px 9px;
+      border-radius: 6px; border: 1px solid var(--border2);
+      background: none; color: var(--muted); cursor: pointer;
+      transition: all .15s; white-space: nowrap;
+    }
+    .spark-btn:hover { border-color: var(--accent-ai); color: var(--accent-ai); }
+
+    /* Loading spinner dentro de la tabla */
+    .hist-loading {
+      text-align: center; padding: 40px 0;
+      color: var(--muted); font-size: 13px;
+    }
+    .hist-loading::before {
+      content: '⟳';
+      display: block; font-size: 26px;
+      animation: spin 1s linear infinite;
+      margin-bottom: 8px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="header-left">
+    <div class="logo-dot"></div>
+    <div>
+      <div class="logo-text">🌡️ Estación Metereológica Francisco Mejía</div>
+      <div class="logo-sub">Temperatura · Presión · Altimetría · IA — 2503 m s.n.m.</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <span class="badge" id="fb-badge">● Conectando...</span>
+    <span class="badge">Actualiza cada 5s</span>
+  </div>
+</header>
+
+<div class="main">
+
+  <div class="left-panel">
+
+    <!-- Config -->
+    <div class="config-card">
+      <div class="config-row">
+        <div class="status-dot" id="fb-dot"></div>
+        <input class="config-input" id="fb-url"
+          value="https://estacion-metereologia-8f-f07e9-default-rtdb.firebaseio.com/.json"
+          readonly>
+        <button class="btn btn-primary btn-sm" onclick="connectFirebase()">Reconectar</button>
+      </div>
+    </div>
+
+    <!-- Gauges -->
+    <div class="gauges-row">
+
+      <!-- Altimetría -->
+      <div class="card alt-card">
+        <div class="card-label">Altimetría Barométrica</div>
+        <div class="alt-main">
+          <span class="alt-val" id="val-alt">--</span>
+          <span class="alt-unit">m s.n.m.</span>
+        </div>
+        <div class="alt-bar-wrap">
+          <div class="alt-bar" id="alt-bar" style="width:0%"></div>
+        </div>
+        <div class="alt-range">
+          <span>2400 m</span><span>2500 m</span><span>2600 m</span>
+        </div>
+        <div class="alt-ref">
+          <div id="alt-trend" class="alt-trend flat">→ estable</div>
+          <div class="alt-formula">Sensor directo BMP/BME280</div>
+        </div>
+        <div class="mini-stats">
+          <div class="mini-stat"><label>Mín</label><span id="min-alt" class="c-pres">--</span></div>
+          <div class="mini-stat center"><label>Prom</label><span id="avg-alt">--</span></div>
+          <div class="mini-stat right"><label>Máx</label><span id="max-alt" class="c-alt">--</span></div>
+        </div>
+      </div>
+
+      <!-- Presión -->
+      <div class="card">
+        <div class="card-label">Presión Atmosférica</div>
+        <svg class="gauge-svg" width="140" height="80" viewBox="0 0 140 80">
+          <path d="M10 75 A 60 60 0 0 1 130 75" fill="none" stroke="#222" stroke-width="9" stroke-linecap="round"/>
+          <path id="arc-p" d="M10 75 A 60 60 0 0 1 130 75" fill="none" stroke="var(--accent-pres)"
+            stroke-width="9" stroke-linecap="round" stroke-dasharray="188.5" stroke-dashoffset="80"/>
+          <text id="val-p" x="70" y="68" text-anchor="middle" fill="var(--accent-pres)"
+            font-size="16" font-weight="600" font-family="sans-serif">--</text>
+        </svg>
+        <div class="gauge-unit">hPa · Rango 700–800</div>
+        <div class="mini-stats">
+          <div class="mini-stat"><label>Mín</label><span id="min-p" class="c-pres">--</span></div>
+          <div class="mini-stat center"><label>Prom</label><span id="avg-p">--</span></div>
+          <div class="mini-stat right"><label>Máx</label><span id="max-p" class="c-temp">--</span></div>
+        </div>
+      </div>
+
+      <!-- Temperatura -->
+      <div class="card">
+        <div class="card-label">Temperatura</div>
+        <svg class="gauge-svg" width="140" height="80" viewBox="0 0 140 80">
+          <path d="M10 75 A 60 60 0 0 1 130 75" fill="none" stroke="#222" stroke-width="9" stroke-linecap="round"/>
+          <path id="arc-t" d="M10 75 A 60 60 0 0 1 130 75" fill="none" stroke="var(--accent-temp)"
+            stroke-width="9" stroke-linecap="round" stroke-dasharray="188.5" stroke-dashoffset="90"/>
+          <text id="val-t" x="70" y="68" text-anchor="middle" fill="var(--accent-temp)"
+            font-size="22" font-weight="600" font-family="sans-serif">--</text>
+        </svg>
+        <div class="gauge-unit">°C · Rango 0–40</div>
+        <div class="mini-stats">
+          <div class="mini-stat"><label>Mín</label><span id="min-t" class="c-pres">--</span></div>
+          <div class="mini-stat center"><label>Prom</label><span id="avg-t">--</span></div>
+          <div class="mini-stat right"><label>Máx</label><span id="max-t" class="c-temp">--</span></div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Sparklines con botón Ver 300 -->
+    <div class="sparklines-row">
+      <div class="card sparkline-card">
+        <div class="spark-header">
+          <div class="spark-label">Historial altitud (m)</div>
+          <button class="spark-btn" onclick="openHist('alt')">Ver 300 ↗</button>
+        </div>
+        <svg id="spark-alt" class="spark-svg" height="60" viewBox="0 0 300 60" preserveAspectRatio="none"></svg>
+      </div>
+      <div class="card sparkline-card">
+        <div class="spark-header">
+          <div class="spark-label">Historial presión (hPa)</div>
+          <button class="spark-btn" onclick="openHist('presion')">Ver 300 ↗</button>
+        </div>
+        <svg id="spark-p" class="spark-svg" height="60" viewBox="0 0 300 60" preserveAspectRatio="none"></svg>
+      </div>
+      <div class="card sparkline-card">
+        <div class="spark-header">
+          <div class="spark-label">Historial temperatura (°C)</div>
+          <button class="spark-btn" onclick="openHist('temp')">Ver 300 ↗</button>
+        </div>
+        <svg id="spark-t" class="spark-svg" height="60" viewBox="0 0 300 60" preserveAspectRatio="none"></svg>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Panel IA -->
+  <div class="right-panel">
+    <div class="ai-header">
+      <div class="ai-icon">✦</div>
+      <div>
+        <div class="ai-title">Asistente meteorológico IA</div>
+        <div class="ai-sub">Gemini · Estación ~2503 m s.n.m.</div>
+      </div>
+    </div>
+
+    <div class="messages" id="messages">
+      <div class="msg ai">
+        <div class="msg-avatar ai">✦</div>
+        <div class="msg-bubble">
+          Hola 👋 Monitoreo tu estación meteorológica de alta montaña
+          a <strong>~2503 m s.n.m.</strong><br><br>
+          Conectando a Firebase y cargando historial de 300 registros...
+        </div>
+      </div>
+    </div>
+
+    <div class="chip-row">
+      <div class="chip" onclick="askChip('¿Cómo están las condiciones actuales?')">☁️ Estado actual</div>
+      <div class="chip" onclick="askChip('¿La presión de 746 hPa es normal a 2500m?')">📊 ¿Normal?</div>
+      <div class="chip" onclick="askChip('¿La presión indica lluvia próxima?')">🌧️ ¿Lloverá?</div>
+      <div class="chip" onclick="askChip('Explica la tendencia de las últimas lecturas')">📈 Tendencia</div>
+      <div class="chip" onclick="askChip('¿Qué temperatura se espera para esta altitud?')">🌡️ Temperatura</div>
+    </div>
+
+    <div class="input-row">
+      <textarea class="chat-input" id="chat-input" rows="1"
+        placeholder="Pregunta sobre tu estación..."
+        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage()}"
+        oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,100)+'px'">
+      </textarea>
+      <button class="send-btn" id="send-btn" onclick="sendMessage()">↑</button>
+    </div>
+  </div>
+
+</div>
+
+<!-- ── Subventanas de historial ──────────────────────────────────── -->
+<div class="hist-overlay" id="hist-overlay" onclick="closeHistIfBg(event)">
+  <div class="hist-window">
+    <div class="hist-head">
+      <div>
+        <h3 id="hist-title">Historial</h3>
+        <span id="hist-count"></span>
+      </div>
+      <button class="hist-close" onclick="closeHist()">✕</button>
+    </div>
+    <div class="hist-body" id="hist-body">
+      <div class="hist-loading">Cargando datos...</div>
+    </div>
+    <div class="hist-footer">
+      <span class="hist-footer-info" id="hist-footer-info">Últimos 300 registros · Firebase Realtime DB</span>
+      <button class="hist-export-btn" id="hist-export-btn">⬇ Exportar CSV</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js?v=20260627"></script>
+</body>
+</html>
